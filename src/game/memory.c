@@ -4,6 +4,12 @@
 #endif
 #ifdef USE_SYSTEM_MALLOC
 #include <stdlib.h>
+
+#ifdef TARGET_WII_U
+#include <malloc.h>
+#else
+#define memalign(a, n) malloc(n)
+#endif
 #endif
 
 #include "sm64.h"
@@ -181,7 +187,7 @@ void main_pool_init(void *start, void *end) {
 
 #ifdef USE_SYSTEM_MALLOC
 void *main_pool_alloc(u32 size, void (*releaseHandler)(void *addr)) {
-    struct MainPoolBlock *newListHead = (struct MainPoolBlock *) malloc(sizeof(struct MainPoolBlock) + size);
+    struct MainPoolBlock *newListHead = (struct MainPoolBlock *) memalign(64, sizeof(struct MainPoolBlock) + size);
     if (newListHead == NULL) {
         abort();
     }
@@ -517,8 +523,8 @@ void alloc_only_pool_clear(struct AllocOnlyPool *pool) {
 }
 
 void *alloc_only_pool_alloc(struct AllocOnlyPool *pool, s32 size) {
-    u8 *addr;
-    u32 s = size;
+    const size_t ptr_size = sizeof(u8 *);
+    u32 s = size + ptr_size;
     if (pool->lastBlockSize - pool->lastBlockNextPos < s) {
         struct AllocOnlyPoolBlock *block;
         u32 nextSize = pool->lastBlockSize * 2;
@@ -528,7 +534,7 @@ void *alloc_only_pool_alloc(struct AllocOnlyPool *pool, s32 size) {
         if (nextSize < s) {
             nextSize = s;
         }
-        block = (struct AllocOnlyPoolBlock *) malloc(sizeof(struct AllocOnlyPoolBlock) + nextSize);
+        block = (struct AllocOnlyPoolBlock *) memalign(64, sizeof(struct AllocOnlyPoolBlock) + nextSize);
         if (block == NULL) {
             abort();
         }
@@ -537,9 +543,12 @@ void *alloc_only_pool_alloc(struct AllocOnlyPool *pool, s32 size) {
         pool->lastBlockSize = nextSize;
         pool->lastBlockNextPos = 0;
     }
-    addr = (u8 *) (pool->lastBlock + 1) + pool->lastBlockNextPos;
+    s -= ptr_size;
+    uintptr_t addr = (uintptr_t) (pool->lastBlock + 1) + pool->lastBlockNextPos;
+    uintptr_t addrAligned = ((addr - 1) | (ptr_size - 1)) + 1;
+    s += addrAligned - addr;
     pool->lastBlockNextPos += s;
-    return addr;
+    return (u8 *)addrAligned;
 }
 
 struct MemoryPool *mem_pool_init(UNUSED u32 size, UNUSED u32 side) {
@@ -799,3 +808,83 @@ s32 load_patchable_table(struct MarioAnimation *a, u32 index) {
     }
     return ret;
 }
+
+#ifdef TARGET_WII_U
+#include <coreinit/cache.h>
+#include <coreinit/memory.h>
+#include <dmae/mem.h>
+
+void *memcpy(void *_dst, const void *_src, u32 size) {
+    if (size > 5120) {
+        const u32 srcMisalignment = (uintptr_t)_src & 7U;
+        const u32 dstMisalignment = (uintptr_t)_dst & 7U;
+
+        if (srcMisalignment == dstMisalignment) {
+            u8       *dst = (u8       *)_dst;
+            const u8 *src = (const u8 *)_src;
+
+            if (srcMisalignment) {
+                const u32 misalignmentInv = 8U - srcMisalignment;
+                OSBlockMove(dst, src, misalignmentInv, FALSE);
+                src += misalignmentInv;
+                dst += misalignmentInv;
+            }
+
+            const u32 sizeAligned   = size & ~3U;
+            const u32 sizeRemainder = size & 3U;
+
+            DCFlushRange((void *)src, sizeAligned);
+            DCFlushRange((void *)dst, sizeAligned);
+            while (!DMAEWaitDone(DMAECopyMem(dst, src, sizeAligned >> 2, DMAE_SWAP_NONE))) {
+            }
+
+            if (sizeRemainder) {
+                OSBlockMove(dst + sizeAligned, src + sizeAligned, sizeRemainder, FALSE);
+            }
+
+            DCFlushRange(_dst, size);
+            return _dst;
+        }
+    }
+
+    return OSBlockMove(_dst, _src, size, FALSE);
+}
+
+void *memmove(void *dst, const void *src, u32 size) {
+    if (src + size < dst || dst + size < src) {
+        return memcpy(dst, src, size);
+    }
+
+    return OSBlockMove(dst, src, size, FALSE);
+}
+
+void *memset(void *_dst, int val, u32 size) {
+    if (size > 5120) {
+        const u32 dstMisalignment = (uintptr_t)_dst & 7U;
+        u8 *dst = (u8 *)_dst;
+
+        if (dstMisalignment) {
+            const u32 misalignmentInv = 8U - dstMisalignment;
+            OSBlockSet(dst, val, misalignmentInv);
+            dst += misalignmentInv;
+        }
+
+        const u32 sizeAligned   = size & ~3U;
+        const u32 sizeRemainder = size & 3U;
+
+        DCFlushRange((void *)dst, sizeAligned);
+        while (!DMAEWaitDone(DMAEFillMem(dst, val, sizeAligned >> 2))) {
+        }
+
+        if (sizeRemainder) {
+            OSBlockSet(dst + sizeAligned, val, sizeRemainder);
+        }
+
+        DCFlushRange(_dst, size);
+        return _dst;
+    }
+
+    return OSBlockSet(_dst, val, size);
+}
+
+#endif

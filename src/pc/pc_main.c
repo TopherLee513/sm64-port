@@ -15,6 +15,7 @@
 #include "gfx/gfx_direct3d11.h"
 #include "gfx/gfx_direct3d12.h"
 #include "gfx/gfx_dxgi.h"
+#include "gfx/gfx_whb.h"
 #include "gfx/gfx_glx.h"
 #include "gfx/gfx_sdl.h"
 #include "gfx/gfx_dummy.h"
@@ -81,7 +82,7 @@ void send_display_list(struct SPTask *spTask) {
 void produce_one_frame(void) {
     gfx_start_frame();
     game_loop_one_iteration();
-    
+
     int samples_left = audio_api->buffered();
     u32 num_audio_samples = samples_left < audio_api->get_desired_buffered() ? SAMPLES_HIGH : SAMPLES_LOW;
     //printf("Audio samples: %d %u\n", samples_left, num_audio_samples);
@@ -95,7 +96,7 @@ void produce_one_frame(void) {
     }
     //printf("Audio samples before submitting: %d\n", audio_api->buffered());
     audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
-    
+
     gfx_end_frame();
 }
 
@@ -145,8 +146,8 @@ void main_func(void) {
     main_pool_init();
     gGfxAllocOnlyPool = alloc_only_pool_init();
 #else
-    static u64 pool[0x165000/8 / 4 * sizeof(void *)];
-    main_pool_init(pool, pool + sizeof(pool) / sizeof(pool[0]));
+    static u8 pool[DOUBLE_SIZE_ON_64_BIT(0x165000)] __attribute__ ((aligned(64)));
+    main_pool_init(pool, pool + sizeof(pool));
 #endif
     gEffectsMemoryPool = mem_pool_init(0x4000, MEMORY_POOL_LEFT);
 
@@ -158,7 +159,13 @@ void main_func(void) {
     request_anim_frame(on_anim_frame);
 #endif
 
-#if defined(ENABLE_DX12)
+#if defined(TARGET_WII_U)
+    save_config(); // Mount SD write now
+
+    rendering_api = &gfx_whb_api;
+    wm_api = &gfx_whb_window;
+    configFullscreen = true;
+#elif defined(ENABLE_DX12)
     rendering_api = &gfx_direct3d12_api;
     wm_api = &gfx_dxgi_api;
 #elif defined(ENABLE_DX11)
@@ -177,10 +184,11 @@ void main_func(void) {
 #endif
 
     gfx_init(wm_api, rendering_api, "Super Mario 64 PC-Port", configFullscreen);
-    
+
     wm_api->set_fullscreen_changed_callback(on_fullscreen_changed);
     wm_api->set_keyboard_callbacks(keyboard_on_key_down, keyboard_on_key_up, keyboard_on_all_keys_up);
-    
+
+
 #if HAVE_WASAPI
     if (audio_api == NULL && audio_wasapi.init()) {
         audio_api = &audio_wasapi;
@@ -196,7 +204,7 @@ void main_func(void) {
         audio_api = &audio_alsa;
     }
 #endif
-#ifdef TARGET_WEB
+#if defined(TARGET_WEB) || defined(TARGET_WII_U)
     if (audio_api == NULL && audio_sdl.init()) {
         audio_api = &audio_sdl;
     }
@@ -216,7 +224,11 @@ void main_func(void) {
     inited = 1;
 #else
     inited = 1;
+#ifdef TARGET_WII_U
+    while (whb_window_is_running()) {
+#else
     while (1) {
+#endif
         wm_api->main_loop(produce_one_frame);
     }
 #endif

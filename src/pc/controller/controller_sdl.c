@@ -1,4 +1,4 @@
-#if !defined(_WIN32) && !defined(_WIN64)
+#if !defined(_WIN32) && !defined(_WIN64) && !defined(TARGET_WII_U)
 
 #include <stdio.h>
 #include <stdint.h>
@@ -54,7 +54,12 @@ static void controller_sdl_read(OSContPad *pad) {
     if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) pad->button |= Z_TRIG;
     if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) pad->button |= R_TRIG;
     if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_A)) pad->button |= A_BUTTON;
-    if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_X)) pad->button |= B_BUTTON;
+    if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_B)) pad->button |= B_BUTTON;
+
+    if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) pad->stick_x = -128;
+    if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) pad->stick_x = 127;
+    if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) pad->stick_y = -128;
+    if (SDL_GameControllerGetButton(sdl_cntrl, SDL_CONTROLLER_BUTTON_DPAD_UP)) pad->stick_y = 127;
 
     int16_t leftx = SDL_GameControllerGetAxis(sdl_cntrl, SDL_CONTROLLER_AXIS_LEFTX);
     int16_t lefty = SDL_GameControllerGetAxis(sdl_cntrl, SDL_CONTROLLER_AXIS_LEFTY);
